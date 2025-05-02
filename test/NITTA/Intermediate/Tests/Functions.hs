@@ -1,4 +1,7 @@
 {-# OPTIONS -fno-warn-orphans #-}
+{-# LANGUAGE FlexibleInstances #-}
+
+-- {-# LANGUAGE OverlappingInstances #-}
 
 {- |
  Module      : NITTA.Intermediate.Tests.Functions
@@ -10,6 +13,10 @@
 -}
 module NITTA.Intermediate.Tests.Functions () where
 
+import Control.Monad (forM)
+import Data.HashMap.Strict qualified as HM
+import Data.List (nub)
+import Data.Map qualified as M
 import Data.Set (fromList, intersection)
 import Data.Set qualified as S
 import Data.Text qualified as T
@@ -59,3 +66,111 @@ instance Arbitrary (IntX m) where
 
 instance Arbitrary x => Arbitrary (Attr x) where
     arbitrary = Attr <$> arbitrary <*> arbitrary
+
+instance Arbitrary x => Arbitrary (Lut T.Text x) where
+    arbitrary = suchThat generateUniqueVars uniqueVars
+        where
+            generateUniqueVars = Lut <$> arbitraryTable <*> inputVarsGen <*> outputVarGen
+
+            arbitraryTable = do
+                keys <- resize maxLenght $ listOf1 (vectorOf maxLenght arbitrary)
+                values <- vectorOf (length keys) arbitrary
+                return $ M.fromList $ zip keys values
+
+            inputVarsGen = resize maxLenght $ listOf1 inputVarGen
+
+            outputVarGen = outputVarsGen
+
+-- instance Arbitrary x => Arbitrary (LogicFunction T.Text x) where
+--     arbitrary = oneof [genLogicAnd, genLogicOr, genLogicNot]
+--         where
+--             genLogicAnd = LogicAnd <$> inputVarGen <*> inputVarGen <*> outputVarsGen
+--             genLogicOr = LogicOr <$> inputVarGen <*> inputVarGen <*> outputVarsGen
+--             genLogicNot = LogicNot <$> inputVarGen <*> outputVarsGen
+
+instance Arbitrary x => Arbitrary (LogicCompare T.Text x) where
+    arbitrary = suchThat generateUniqueVars uniqueVars
+        where
+            generateUniqueVars = do
+                op <- elements [CMP_EQ, CMP_LT, CMP_LTE, CMP_GT, CMP_GTE]
+                a <- inputVarGen
+                b <- inputVarGen
+                LogicCompare op a b <$> outputVarsGen
+
+instance Arbitrary x => Arbitrary (Cntx T.Text x) where
+    arbitrary = do
+        inputVars <- vectorOf 16 inputVarGen
+        let keys = map (\(I v) -> v) inputVars
+        values <- mapM (const arbitrary) keys
+        let cycleCntxMap = HM.fromList (zip keys values)
+        let process = [CycleCntx cycleCntxMap]
+
+        let received = M.empty
+        return $
+            Cntx
+                { cntxProcess = process
+                , cntxReceived = received
+                , cntxCycleNumber = 0
+                }
+
+instance Arbitrary (Mux T.Text Int) where
+    arbitrary =
+        Mux
+            <$> vectorOf 11 inputVarGen
+            <*> inputVarGen
+            <*> outputVarsGen
+
+instance {-# OVERLAPS #-} Arbitrary ([Mux T.Text Int], Cntx T.Text Int) where
+    arbitrary = do
+        m@(Mux ins sel _) <- suchThat arbitrary uniqueVars
+
+        let inputVars = [v | I v <- ins]
+            selVar = case sel of I v -> v
+            allVars = nub $ inputVars ++ [selVar]
+
+        initialValues <- forM allVars $ \v -> do
+            Positive x <- arbitrary
+            return (v, x)
+
+        let dataCount = length inputVars
+        selValue <-
+            if dataCount > 0
+                then choose (0, dataCount - 1)
+                else pure 0
+
+        let cntx =
+                Cntx
+                    { cntxProcess = [CycleCntx $ HM.fromList $ (selVar, selValue) : initialValues]
+                    , cntxReceived = M.empty
+                    , cntxCycleNumber = 0
+                    }
+
+        return ([m], cntx)
+
+instance {-# OVERLAPS #-} Arbitrary ([LogicFunction T.Text Int], Cntx T.Text Int) where
+    arbitrary = do
+        f <- oneof [genLogicAnd, genLogicOr, genLogicNot]
+
+        let (inVars, _) = case f of
+                LogicAnd a b (O o) -> ([a, b], head $ S.toList o)
+                LogicOr a b (O o) -> ([a, b], head $ S.toList o)
+                LogicNot a (O o) -> ([a], head $ S.toList o)
+
+        inputValues <- forM inVars $ \_ -> do
+            Positive x <- arbitrary
+            return x
+
+        let cntx =
+                Cntx
+                    { cntxProcess = [CycleCntx $ HM.fromList $ zip (map getVar inVars) inputValues]
+                    , cntxReceived = M.empty
+                    , cntxCycleNumber = 0
+                    }
+
+        return ([f], cntx)
+        where
+            genLogicAnd = suchThat (LogicAnd <$> inputVarGen <*> inputVarGen <*> outputVarsGen) uniqueVars
+            genLogicOr = suchThat (LogicOr <$> inputVarGen <*> inputVarGen <*> outputVarsGen) uniqueVars
+            genLogicNot = suchThat (LogicNot <$> inputVarGen <*> outputVarsGen) uniqueVars
+
+            getVar (I v) = v

@@ -104,6 +104,7 @@ import NITTA.Intermediate.DataFlow
 import NITTA.Intermediate.Functions qualified as F
 import NITTA.Intermediate.Types
 import NITTA.Utils.Base
+import Prelude hiding (EQ, GT, LT)
 
 getUniqueLuaVariableName LuaValueInstance{lviName, lviIsConstant = True} luaValueAccessCount = "!" <> lviName <> "#" <> showText luaValueAccessCount
 getUniqueLuaVariableName LuaValueInstance{lviName, lviAssignCount} luaValueAccessCount
@@ -175,12 +176,24 @@ parseRightExp fOut@(x : _) (Binop op a b) = do
         getBinopFuncName Sub = "sub"
         getBinopFuncName Mul = "multiply"
         getBinopFuncName Div = "divide"
+        getBinopFuncName And = "and"
+        getBinopFuncName Or = "or"
+        getBinopFuncName LT = "lessThan"
+        getBinopFuncName LTE = "lessThanOrEqual"
+        getBinopFuncName EQ = "equal"
+        getBinopFuncName GTE = "greaterThanOrEqual"
+        getBinopFuncName GT = "greaterThan"
+        -- getBinopFuncName NEQ = "notEqual"
         getBinopFuncName o = error $ "unknown binop: " <> show o
 parseRightExp fOut (PrefixExp (Paren e)) = parseRightExp fOut e
 parseRightExp fOut (Unop Neg (Number numType name)) = parseRightExp fOut (Number numType ("-" <> name))
 parseRightExp [fOut] (Unop Neg expr@(PrefixExp _)) = do
     varName <- parseExpArg fOut expr
     addVariable [varName] [fOut] [] "neg" []
+parseRightExp fOut (Unop Not (Number numType name)) = parseRightExp fOut (Number numType ("not" <> name))
+parseRightExp [fOut] (Unop Not expr@(PrefixExp _)) = do
+    varName <- parseExpArg fOut expr
+    addVariable [varName] [fOut] [] "not" []
 parseRightExp
     [fOut]
     ( PrefixExp
@@ -296,6 +309,10 @@ processStatement _fn (FunCall (NormalFunCall (PEVar (SelectName (PEVar (VarName 
         parseTraceArg (String s) = s
         parseTraceArg (PrefixExp (PEVar (VarName (Name name)))) = name
         parseTraceArg _ = undefined
+-- processStatement _fn (If [(exp, block)] Nothing) = do
+--     varName <- parseExpArg "if" exp
+--     luaAlgBuilder@LuaAlgBuilder{algGraph} <- get
+--     put luaAlgBuilder{algGraph = LuaStatement{fIn = [varName], fOut = [], fValues = [], fName = "if", fInt = []} : algGraph}
 processStatement _ _stat = error $ "unknown statement: " <> show _stat
 
 addFunction funcName [i] fOut | toString funcName == "buffer" = do
@@ -307,6 +324,8 @@ addFunction funcName [i] _ | toString funcName == "send" = do
     put luaAlgBuilder{algGraph = LuaStatement{fIn = [i], fOut = [], fValues = [], fName = "send", fInt = []} : algGraph}
 addFunction funcName _ fOut | toString funcName == "receive" = do
     addVariable [] fOut [] "receive" []
+addFunction "if_mux" [cond, a, b] [c] = do
+    addVariable [cond, a, b] [c] [] "if_mux" []
 addFunction fName _ _ = error $ "unknown function" <> T.unpack fName
 
 addConstant (Number _valueType valueString) = do
@@ -435,6 +454,17 @@ alg2graph LuaAlgBuilder{algGraph, algLatestLuaValueInstance, algVars} = flip exe
         function2nitta LuaStatement{fName = "shiftL", fIn = [a], fOut = [c], fValues = [], fInt = [s]} = F.shiftL s (fromText a) $ output c
         function2nitta LuaStatement{fName = "shiftR", fIn = [a], fOut = [c], fValues = [], fInt = [s]} = F.shiftR s (fromText a) $ output c
         function2nitta LuaStatement{fName = "loop", fIn = [a], fOut = [c], fValues = [x], fInt = []} = F.loop x (fromText a) $ output c
+        function2nitta LuaStatement{fName = "and", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.logicAnd (fromText a) (fromText b) $ output c
+        function2nitta LuaStatement{fName = "or", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.logicOr (fromText a) (fromText b) $ output c
+        function2nitta LuaStatement{fName = "not", fIn = [a], fOut = [c], fValues = [], fInt = []} = F.logicNot (fromText a) $ output c
+        function2nitta LuaStatement{fName = "lessThan", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.logicCompare F.CMP_LT (fromText a) (fromText b) (output c)
+        function2nitta LuaStatement{fName = "lessThanOrEqual", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.logicCompare F.CMP_LTE (fromText a) (fromText b) $ output c
+        function2nitta LuaStatement{fName = "equal", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.logicCompare F.CMP_EQ (fromText a) (fromText b) $ output c
+        function2nitta LuaStatement{fName = "greaterThanOrEqual", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.logicCompare F.CMP_GTE (fromText a) (fromText b) $ output c
+        function2nitta LuaStatement{fName = "greaterThan", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.logicCompare F.CMP_GT (fromText a) (fromText b) $ output c
+        function2nitta LuaStatement{fName = "if_mux", fIn = [cond, b, a], fOut = [c], fValues = [], fInt = []} = F.mux (fromText a) (fromText b) (fromText cond) $ output c
+        -- function2nitta LuaStatement{fName = "if", fIn = [a, b, c], fOut = [d], fValues = [], fInt = []} = F.mux (fromText a) (fromText b) (fromText c) $ output d -- todo
+        -- function2nitta LuaStatement{fName = "notEqual", fIn = [a, b], fOut = [c], fValues = [], fInt = []} = F.notEqual (fromText a) (fromText b) $ output c
         function2nitta f = error $ "function not found: " <> show f
         output v =
             case HM.lookup v algVars of

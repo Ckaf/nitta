@@ -126,6 +126,9 @@ module NITTA.Model.ProcessorUnits (
     module NITTA.Model.ProcessorUnits.IO.SPI,
     module NITTA.Model.ProcessorUnits.Multiplier,
     module NITTA.Model.ProcessorUnits.Shift,
+    module NITTA.Model.ProcessorUnits.LUT,
+    module NITTA.Model.ProcessorUnits.Compare,
+    module NITTA.Model.ProcessorUnits.Multiplexer,
 ) where
 
 import NITTA.Model.ProcessorUnits.Types
@@ -133,8 +136,11 @@ import NITTA.Model.Time
 
 import NITTA.Model.ProcessorUnits.Accum
 import NITTA.Model.ProcessorUnits.Broken
+import NITTA.Model.ProcessorUnits.Compare
 import NITTA.Model.ProcessorUnits.Divider
 import NITTA.Model.ProcessorUnits.Fram
 import NITTA.Model.ProcessorUnits.IO.SPI
+import NITTA.Model.ProcessorUnits.LUT
+import NITTA.Model.ProcessorUnits.Multiplexer
 import NITTA.Model.ProcessorUnits.Multiplier
 import NITTA.Model.ProcessorUnits.Shift
